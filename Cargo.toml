@@ -1,0 +1,18 @@
+[package]
+name = "rust-lightning-example"
+version = "0.1.0"
+authors = ["bmancini55 <bmancini@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+hex = "0.4.2"
+bitcoin = "0.23"
+lightning = { version = "0.0.11", path = "../rust-lightning/lightning" }
+lightning-net-tokio = { version = "0.0.4", path = "../rust-lightning/lightning-net-tokio" }
+tokio = { version = ">=0.2.12", features = [ "io-util", "macros", "rt-core", "sync", "tcp", "time" ] }
+rand = "0.7.3"
+
+[dev-dependencies]
+tokio = { version = ">=0.2.12", features = [ "io-util", "macros", "rt-core", "rt-threaded", "sync", "tcp", "time" ] }
