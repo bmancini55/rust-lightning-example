@@ -74,12 +74,14 @@ impl LightingClient {
         // next we will construct a Arc<SimpleManyChannelMonitor>
         // that uses a ChainMonitor, FeeEstimator, TxBroadcaster,
         // and Logger.
-        let channel_monitor = Arc::new(ChannelMonitor::new(
-            chain_watcher.clone(),
-            bitcoin_client.clone(),
-            logger.clone(),
-            bitcoin_client.clone(),
-        ));
+        let channel_monitor: Arc<ChannelMonitor> = Arc::new(
+            lightning::ln::channelmonitor::SimpleManyChannelMonitor::new(
+                chain_watcher.clone(),
+                bitcoin_client.clone(),
+                logger.clone(),
+                bitcoin_client.clone(),
+            ),
+        );
 
         // next we construct a keys_manager from our supplied seed
         // for the appropriate network. Again we don't really need
