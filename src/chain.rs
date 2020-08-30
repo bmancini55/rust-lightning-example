@@ -1,22 +1,31 @@
 use bitcoin::Transaction;
 use lightning::chain::chaininterface::{BroadcasterInterface, ConfirmationTarget, FeeEstimator};
 use lightning::util::logger::{Level, Logger, Record};
-use std::sync::Arc;
+use std::ops::Deref;
 
-pub struct FakeBitcoinClient {
-    pub logger: Arc<dyn Logger>,
+pub struct FakeBitcoinClient<L: Deref>
+where
+    L::Target: Logger,
+{
+    pub logger: L,
 }
 
-unsafe impl Sync for FakeBitcoinClient {}
-unsafe impl Send for FakeBitcoinClient {}
+unsafe impl<L: Deref> Sync for FakeBitcoinClient<L> where L::Target: Logger {}
+unsafe impl<L: Deref> Send for FakeBitcoinClient<L> where L::Target: Logger {}
 
-impl FakeBitcoinClient {
-    pub fn new(logger: Arc<dyn Logger>) -> FakeBitcoinClient {
+impl<L: Deref> FakeBitcoinClient<L>
+where
+    L::Target: Logger,
+{
+    pub fn new(logger: L) -> FakeBitcoinClient<L> {
         FakeBitcoinClient { logger }
     }
 }
 
-impl BroadcasterInterface for FakeBitcoinClient {
+impl<L: Deref> BroadcasterInterface for FakeBitcoinClient<L>
+where
+    L::Target: Logger,
+{
     /// Sends a transaction out to (hopefully) be mined.
     fn broadcast_transaction(&self, tx: &Transaction) {
         self.logger.log(&Record::new(
@@ -29,7 +38,10 @@ impl BroadcasterInterface for FakeBitcoinClient {
     }
 }
 
-impl FeeEstimator for FakeBitcoinClient {
+impl<L: Deref> FeeEstimator for FakeBitcoinClient<L>
+where
+    L::Target: Logger,
+{
     /// Gets estimated satoshis of fee required per 1000 Weight-Units.
     ///
     /// Must be no smaller than 253 (ie 1 satoshi-per-byte rounded up to ensure later round-downs
@@ -42,47 +54,3 @@ impl FeeEstimator for FakeBitcoinClient {
         return 1000;
     }
 }
-
-// impl ChainWatchInterface for FakeBitcoinClient {
-//     /// Provides a txid/random-scriptPubKey-in-the-tx which much be watched for.
-//     fn install_watch_tx(&self, _txid: &Txid, _script_pub_key: &Script) {
-//         // no-op
-//     }
-
-//     /// Provides an outpoint which must be watched for, providing any transactions which spend the
-//     /// given outpoint.
-//     fn install_watch_outpoint(&self, _outpoint: (Txid, u32), _out_script: &Script) {
-//         // no-op
-//     }
-
-//     /// Indicates that a listener needs to see all transactions.
-//     fn watch_all_txn(&self) {
-//         // no-op
-//     }
-
-//     /// Gets the script and value in satoshis for a given unspent transaction output given a
-//     /// short_channel_id (aka unspent_tx_output_identier). For BTC/tBTC channels the top three
-//     /// bytes are the block height, the next 3 the transaction index within the block, and the
-//     /// final two the output within the transaction.
-//     fn get_chain_utxo(
-//         &self,
-//         _genesis_hash: BlockHash,
-//         _unspent_tx_output_identifier: u64,
-//     ) -> Result<(Script, u64), ChainError> {
-//         Ok((Script::new(), 0))
-//     }
-
-//     /// Gets the list of transaction indices within a given block that the ChainWatchInterface is
-//     /// watching for.
-//     fn filter_block(&self, _block: &Block) -> Vec<usize> {
-//         // no-op
-//         vec![]
-//     }
-
-//     /// Returns a usize that changes when the ChainWatchInterface's watched data is modified.
-//     /// Users of `filter_block` should pre-save a copy of `reentered`'s return value and use it to
-//     /// determine whether they need to re-filter a given block.
-//     fn reentered(&self) -> usize {
-//         0
-//     }
-// }
