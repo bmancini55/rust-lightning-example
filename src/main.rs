@@ -1,15 +1,34 @@
+use bitcoin::network::constants::Network;
+use bitcoin::secp256k1::key::SecretKey;
+use std::sync::Arc;
+mod chain;
+mod log;
+
 #[tokio::main]
 async fn main() {
-    client::run().await;
+    let seed = rand::random::<[u8; 32]>();
+    let node_key_str = "d84985781fee4676a616f81399d28cced95a691a983c582b6285108e02830673";
+    let node_key_slice = hex::decode(node_key_str).unwrap();
+    let node_key = SecretKey::from_slice(&node_key_slice).unwrap();
+
+    let user_config = lightning::util::config::UserConfig::default();
+
+    let democlient = Arc::new(client::LightingClient::new(
+        node_key,
+        &seed,
+        user_config,
+        Network::Testnet,
+    ));
+
+    client::connect(democlient).await;
 }
 
 mod client {
-    use super::chain;
-    use super::log;
+    use crate::chain;
+    use crate::log;
     use bitcoin::network::constants::Network;
-    use bitcoin::secp256k1::key::PublicKey;
+    use bitcoin::secp256k1::key::{PublicKey, SecretKey};
     use hex;
-    use lightning::chain::chaininterface::BroadcasterInterface as BroadcasterInterfaceTrait;
     use lightning::chain::keysinterface::KeysManager;
     use lightning::util::events::EventsProvider;
     use lightning::util::logger::Logger as LoggerTrait;
@@ -18,7 +37,110 @@ mod client {
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
-    pub async fn run() {
+    /// Super basic wrapper class that is going to implement the bare
+    /// minimum needed so we can look for p2p messaging traffic and
+    /// connect to a remote node.
+    pub struct LightingClient {
+        channel_manager: ChannelManager,
+        channel_monitor: Arc<ChannelMonitor>,
+        peer_manager: PeerManager,
+    }
+
+    impl LightingClient {
+        pub fn new(
+            node_key: SecretKey,
+            seed: &[u8; 32],
+            user_config: lightning::util::config::UserConfig,
+            network: Network,
+        ) -> Self {
+            // construct a concrete logger for our application that will
+            // simply log to the console. not much special there.
+            let logger = Arc::new(log::ConsoleLogger::new());
+
+            // constructs a bitcoin_client which implements ChainMonitor
+            // TransactionBroadcaster and FeeEstimator. Since this is
+            // a dev environment we'll make this a concrete type.
+            let bitcoin_client = Arc::new(chain::FakeBitcoinClient::new(logger.clone()));
+
+            // next we will construct a Arc<SimpleManyChannelMonitor>
+            // that uses a ChainMonitor, FeeEstimator, TxBroadcaster,
+            // and Logger.
+            let channel_monitor = Arc::new(ChannelMonitor::new(
+                bitcoin_client.clone(),
+                bitcoin_client.clone(),
+                logger.clone(),
+                bitcoin_client.clone(),
+            ));
+
+            // next we construct a keys_manager from our supplied seed
+            // for the appropriate network. Again we don't really need
+            // to do much with this since we're only concerned with
+            // gossip traffic
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap();
+            let keys_manager = Arc::new(KeysManager::new(
+                &seed,
+                network,
+                ts.as_secs(),
+                ts.subsec_nanos(),
+            ));
+
+            // next we construct a channel manager for
+            let last_height: usize = 1000000;
+            let channel_manager: ChannelManager =
+                Arc::new(lightning::ln::channelmanager::ChannelManager::new(
+                    Network::Testnet,
+                    bitcoin_client.clone(),
+                    channel_monitor.clone(),
+                    bitcoin_client.clone(),
+                    logger.clone(),
+                    keys_manager.clone(),
+                    user_config,
+                    last_height,
+                ));
+
+            // next construct the NetGraphMsgHandler. This type will be
+            // used as the RoutingMessageHandler which gets attached to
+            // a MessageHandler, which is itself used in the
+            // PeerManager. Cool.
+            let net_graph_manager: NetGraphManager =
+                Arc::new(lightning::routing::network_graph::NetGraphMsgHandler::new(
+                    bitcoin_client.clone(),
+                    logger.clone(),
+                ));
+
+            // Now that we have a ChannelMessageHandler (channel_manager)
+            // and a RoutingMessageHandler (net_graph_manager) we can
+            // we can construct a MessageHandler which contains
+            // references and provides access by a Peer.
+            let message_handler = lightning::ln::peer_handler::MessageHandler {
+                chan_handler: channel_manager.clone(),
+                route_handler: net_graph_manager.clone(),
+            };
+
+            // Now that we have the Message Handler constructed we can
+            // make our PeerManager and supply it with MessageHandler
+            // and some other stuff
+            let peer_manager: PeerManager =
+                Arc::new(lightning::ln::peer_handler::PeerManager::new(
+                    message_handler,
+                    node_key,
+                    &rand::random::<[u8; 32]>(),
+                    logger.clone(),
+                ));
+
+            // Finally we capture all this jazz in our client object
+            let res = LightingClient {
+                peer_manager,
+                channel_manager,
+                channel_monitor,
+            };
+            res
+        }
+    }
+
+    pub async fn connect(client: Arc<LightingClient>) {
         let node_id = PublicKey::from_slice(
             &hex::decode("036b96e4713c5f84dcb8030592e1bd42a2d9a43d91fa2e535b9bfd05f2c5def9b9")
                 .unwrap(),
@@ -40,20 +162,23 @@ mod client {
             "file",
             22,
         ));
-        let bitcoin_client = Arc::new(chain::FakeBitcoinClient::new(logger.clone()));
-        let tx = bitcoin::blockdata::transaction::Transaction {
-            version: 2,
-            lock_time: 0,
-            input: vec![],
-            output: vec![],
-        };
-        bitcoin_client.broadcast_transaction(&tx);
-        let channel_monitor = Arc::new(ChannelMonitor::new(
-            bitcoin_client.clone(),
-            bitcoin_client.clone(),
-            logger.clone(),
-            bitcoin_client.clone(),
-        ));
+
+        // let bitcoin_client = Arc::new(chain::FakeBitcoinClient::new(logger.clone()));
+        // let tx = bitcoin::blockdata::transaction::Transaction {
+        //     version: 2,
+        //     lock_time: 0,
+        //     input: vec![],
+        //     output: vec![],
+        // };
+        // bitcoin_client.broadcast_transaction(&tx);
+
+        // let channel_monitor = Arc::new(ChannelMonitor::new(
+        //     bitcoin_client.clone(),
+        //     bitcoin_client.clone(),
+        //     logger.clone(),
+        //     bitcoin_client.clone(),
+        // ));
+
         // let secp_context = bitcoin::secp256k1::Secp256k1::new();
         // let funding_key = bitcoin::secp256k1::SecretKey::from_slice(&[0x01; 32]).unwrap();
         // let revocation_base_key = bitcoin::secp256k1::SecretKey::from_slice(&[0x02; 32]).unwrap();
@@ -71,52 +196,62 @@ mod client {
         //     0_u64,
         //     (0_u64, 0_u64),
         // ));
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap();
-        let seed = rand::random::<[u8; 32]>();
-        let keys_manager = Arc::new(KeysManager::new(
-            &seed,
-            Network::Testnet,
-            ts.as_secs(),
-            ts.subsec_nanos(),
-        ));
-        let user_config = lightning::util::config::UserConfig::default();
-        let channel_manager: ChannelManager =
-            Arc::new(lightning::ln::channelmanager::ChannelManager::new(
-                Network::Testnet,
-                bitcoin_client.clone(),
-                channel_monitor.clone(),
-                bitcoin_client.clone(),
-                logger.clone(),
-                keys_manager,
-                user_config,
-                1000000,
-            ));
-        let net_graph_manager: NetGraphManager =
-            Arc::new(lightning::routing::network_graph::NetGraphMsgHandler::new(
-                bitcoin_client.clone(),
-                logger.clone(),
-            ));
-        let message_handler = lightning::ln::peer_handler::MessageHandler {
-            chan_handler: channel_manager.clone(),
-            route_handler: net_graph_manager.clone(),
-        };
-        let node_key = bitcoin::secp256k1::SecretKey::from_slice(
-            &hex::decode("d84985781fee4676a616f81399d28cced95a691a983c582b6285108e02830673")
-                .unwrap(),
-        )
-        .unwrap();
-        let peer_manager: PeerManager = Arc::new(lightning::ln::peer_handler::PeerManager::new(
-            message_handler,
-            node_key,
-            &rand::random::<[u8; 32]>(),
-            logger.clone(),
-        ));
+
+        // let ts = std::time::SystemTime::now()
+        //     .duration_since(std::time::UNIX_EPOCH)
+        //     .unwrap();
+        // let seed = rand::random::<[u8; 32]>();
+        // let keys_manager = Arc::new(KeysManager::new(
+        //     &seed,
+        //     Network::Testnet,
+        //     ts.as_secs(),
+        //     ts.subsec_nanos(),
+        // ));
+
+        // let user_config = lightning::util::config::UserConfig::default();
+        // let channel_manager: ChannelManager =
+        //     Arc::new(lightning::ln::channelmanager::ChannelManager::new(
+        //         Network::Testnet,
+        //         bitcoin_client.clone(),
+        //         channel_monitor.clone(),
+        //         bitcoin_client.clone(),
+        //         logger.clone(),
+        //         keys_manager,
+        //         user_config,
+        //         1000000,
+        //     ));
+
+        // // next construct the network graph manager. This imple
+        // let net_graph_manager: NetGraphManager =
+        //     Arc::new(lightning::routing::network_graph::NetGraphMsgHandler::new(
+        //         bitcoin_client.clone(),
+        //         logger.clone(),
+        //     ));
+
+        // // now that we have implemented the two types for message
+        // // handling we can construct a MessageHandler which contains
+        // // references to the different message handlers and it is
+        // // used by the peer
+        // let message_handler = lightning::ln::peer_handler::MessageHandler {
+        //     chan_handler: channel_manager.clone(),
+        //     route_handler: net_graph_manager.clone(),
+        // };
+        // let node_key = bitcoin::secp256k1::SecretKey::from_slice(
+        //     &hex::decode("d84985781fee4676a616f81399d28cced95a691a983c582b6285108e02830673")
+        //         .unwrap(),
+        // )
+        // .unwrap();
+        // let peer_manager: PeerManager = Arc::new(lightning::ln::peer_handler::PeerManager::new(
+        //     message_handler,
+        //     node_key,
+        //     &rand::random::<[u8; 32]>(),
+        //     logger.clone(),
+        // ));
+
         connect_to_node(
-            peer_manager,
-            channel_monitor,
-            channel_manager,
+            client.peer_manager.clone(),
+            client.channel_monitor.clone(),
+            client.channel_manager.clone(),
             node_id,
             node_addr,
         )
@@ -197,118 +332,4 @@ mod client {
     //         }
     //     }
     // }
-}
-
-mod log {
-    use lightning::util::logger::{Logger, Record};
-
-    pub struct ConsoleLogger {}
-
-    impl ConsoleLogger {
-        pub fn new() -> ConsoleLogger {
-            ConsoleLogger {}
-        }
-    }
-
-    unsafe impl Send for ConsoleLogger {}
-    unsafe impl Sync for ConsoleLogger {}
-
-    impl Logger for ConsoleLogger {
-        fn log(&self, record: &Record) {
-            println!("{} {:?}", record.level, record.args);
-        }
-    }
-}
-
-mod chain {
-    use bitcoin::{Block, BlockHash, Script, Transaction, Txid};
-    use lightning::chain::chaininterface::{
-        BroadcasterInterface, ChainError, ChainWatchInterface, ConfirmationTarget, FeeEstimator,
-    };
-    use lightning::util::logger::{Level, Logger, Record};
-    use std::sync::Arc;
-
-    pub struct FakeBitcoinClient {
-        pub logger: Arc<dyn Logger>,
-    }
-
-    unsafe impl Sync for FakeBitcoinClient {}
-    unsafe impl Send for FakeBitcoinClient {}
-
-    impl FakeBitcoinClient {
-        pub fn new(logger: Arc<dyn Logger>) -> FakeBitcoinClient {
-            FakeBitcoinClient { logger }
-        }
-    }
-
-    impl BroadcasterInterface for FakeBitcoinClient {
-        /// Sends a transaction out to (hopefully) be mined.
-        fn broadcast_transaction(&self, tx: &Transaction) {
-            self.logger.log(&Record::new(
-                Level::Info,
-                format_args!("{:?}", tx),
-                "chain",
-                "FakeBitcoinClient",
-                0,
-            ));
-        }
-    }
-
-    impl FeeEstimator for FakeBitcoinClient {
-        /// Gets estimated satoshis of fee required per 1000 Weight-Units.
-        ///
-        /// Must be no smaller than 253 (ie 1 satoshi-per-byte rounded up to ensure later round-downs
-        /// don't put us below 1 satoshi-per-byte).
-        ///
-        /// This translates to:
-        ///  * satoshis-per-byte * 250
-        ///  * ceil(satoshis-per-kbyte / 4)
-        fn get_est_sat_per_1000_weight(&self, _confirmation_target: ConfirmationTarget) -> u32 {
-            return 1000;
-        }
-    }
-
-    impl ChainWatchInterface for FakeBitcoinClient {
-        /// Provides a txid/random-scriptPubKey-in-the-tx which much be watched for.
-        fn install_watch_tx(&self, _txid: &Txid, _script_pub_key: &Script) {
-            // no-op
-        }
-
-        /// Provides an outpoint which must be watched for, providing any transactions which spend the
-        /// given outpoint.
-        fn install_watch_outpoint(&self, _outpoint: (Txid, u32), _out_script: &Script) {
-            // no-op
-        }
-
-        /// Indicates that a listener needs to see all transactions.
-        fn watch_all_txn(&self) {
-            // no-op
-        }
-
-        /// Gets the script and value in satoshis for a given unspent transaction output given a
-        /// short_channel_id (aka unspent_tx_output_identier). For BTC/tBTC channels the top three
-        /// bytes are the block height, the next 3 the transaction index within the block, and the
-        /// final two the output within the transaction.
-        fn get_chain_utxo(
-            &self,
-            _genesis_hash: BlockHash,
-            _unspent_tx_output_identifier: u64,
-        ) -> Result<(Script, u64), ChainError> {
-            Ok((Script::new(), 0))
-        }
-
-        /// Gets the list of transaction indices within a given block that the ChainWatchInterface is
-        /// watching for.
-        fn filter_block(&self, _block: &Block) -> Vec<usize> {
-            // no-op
-            vec![]
-        }
-
-        /// Returns a usize that changes when the ChainWatchInterface's watched data is modified.
-        /// Users of `filter_block` should pre-save a copy of `reentered`'s return value and use it to
-        /// determine whether they need to re-filter a given block.
-        fn reentered(&self) -> usize {
-            0
-        }
-    }
 }
