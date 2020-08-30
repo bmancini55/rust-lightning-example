@@ -2,6 +2,7 @@ use crate::chain;
 use crate::log;
 use bitcoin::network::constants::Network;
 use bitcoin::secp256k1::key::{PublicKey, SecretKey};
+use lightning::chain::chaininterface::ChainWatchInterfaceUtil;
 use lightning::chain::keysinterface::KeysManager;
 use lightning::util::events::EventsProvider;
 use std::net::SocketAddr;
@@ -64,11 +65,17 @@ impl LightingClient {
         // a dev environment we'll make this a concrete type.
         let bitcoin_client = Arc::new(chain::FakeBitcoinClient::new(logger.clone()));
 
+        // construct a ChainWatchInterfaceUtil which implements
+        // ChainWatchInteface and will be provided to the ChannelMonitor
+        // and NetGraphManager since they both watch for changes to
+        // transactions of interest.
+        let chain_watcher = Arc::new(ChainWatchInterfaceUtil::new(network));
+
         // next we will construct a Arc<SimpleManyChannelMonitor>
         // that uses a ChainMonitor, FeeEstimator, TxBroadcaster,
         // and Logger.
         let channel_monitor = Arc::new(ChannelMonitor::new(
-            bitcoin_client.clone(),
+            chain_watcher.clone(),
             bitcoin_client.clone(),
             logger.clone(),
             bitcoin_client.clone(),
@@ -102,13 +109,13 @@ impl LightingClient {
                 last_height,
             ));
 
-        // next construct the NetGraphMsgHandler. This type will be
-        // used as the RoutingMessageHandler which gets attached to
-        // a MessageHandler, which is itself used in the
-        // PeerManager. Cool.
+        // next construct the NetGraphMsgHandler which requires a
+        // ChainWatchInterface. This type will be used as the
+        // RoutingMessageHandler which gets attached to a MessageHandler,
+        // which is itself used in the PeerManager. Cool.
         let net_graph_manager: NetGraphManager =
             Arc::new(lightning::routing::network_graph::NetGraphMsgHandler::new(
-                bitcoin_client.clone(),
+                chain_watcher.clone(),
                 logger.clone(),
             ));
 
