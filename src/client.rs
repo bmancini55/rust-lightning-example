@@ -4,7 +4,6 @@ use bitcoin::network::constants::Network;
 use bitcoin::secp256k1::key::{PublicKey, SecretKey};
 use lightning::chain::chaininterface::ChainWatchInterfaceUtil;
 use lightning::chain::keysinterface::KeysManager;
-use lightning::util::events::EventsProvider;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -31,12 +30,16 @@ type ChannelManager = lightning::ln::channelmanager::SimpleArcChannelManager<
 type NetGraphManager = Arc<
     lightning::routing::network_graph::NetGraphMsgHandler<Arc<ChainWatchInterface>, Arc<Logger>>,
 >;
+
+type GossipQueriesManager = lightning::routing::gossip::SimplGossipQueryHandler<Arc<Logger>>;
+
 type PeerManager = lightning::ln::peer_handler::SimpleArcPeerManager<
     lightning_net_tokio::SocketDescriptor,
     ChannelMonitor,
     TxBroadcaster,
     FeeEstimator,
     ChainWatchInterface,
+    GossipQueriesManager,
     Logger,
 >;
 
@@ -44,8 +47,6 @@ type PeerManager = lightning::ln::peer_handler::SimpleArcPeerManager<
 /// minimum needed so we can look for p2p messaging traffic and
 /// connect to a remote node.
 pub struct LightingClient {
-    channel_manager: ChannelManager,
-    channel_monitor: Arc<ChannelMonitor>,
     peer_manager: PeerManager,
 }
 
@@ -121,6 +122,8 @@ impl LightingClient {
                 logger.clone(),
             ));
 
+        let gossip_handler = Arc::new(GossipQueriesManager::new(logger.clone()));
+
         // Now that we have a ChannelMessageHandler (channel_manager)
         // and a RoutingMessageHandler (net_graph_manager) we can
         // we can construct a MessageHandler which contains
@@ -128,6 +131,7 @@ impl LightingClient {
         let message_handler = lightning::ln::peer_handler::MessageHandler {
             chan_handler: channel_manager.clone(),
             route_handler: net_graph_manager.clone(),
+            gossip_queries_handler: gossip_handler.clone(),
         };
 
         // Now that we have the Message Handler constructed we can
@@ -142,9 +146,7 @@ impl LightingClient {
 
         // Finally we capture all this jazz in our client object
         let res = LightingClient {
-            peer_manager,
-            channel_manager,
-            channel_monitor,
+            peer_manager
         };
         res
     }
@@ -165,20 +167,7 @@ impl LightingClient {
 
         loop {
             receiver.recv().await;
-            for _event in self
-                .channel_manager
-                .get_and_clear_pending_events()
-                .drain(..)
-            {
-                // Handle the event
-            }
-            for _event in self
-                .channel_monitor
-                .get_and_clear_pending_events()
-                .drain(..)
-            {
-                // Handle the event
-            }
+            self.peer_manager.process_events();
         }
     }
 }
