@@ -21,7 +21,7 @@ async fn main() {
     let logger: Arc<Logger> = Arc::new(log::ConsoleLogger::new());
 
     let seed = rand::random::<[u8; 32]>();
-    let node_key_str = "d84985781fee4676a616f81399d28cced95a691a983c582b6285108e02830673";
+    let node_key_str = "961cbdc16536c7df1e2ba6006e3e9c8f6dd2446850c207f25276a7b355fc60a5";
     let node_key_slice = hex::decode(node_key_str).unwrap();
     let node_key = SecretKey::from_slice(&node_key_slice).unwrap();
 
