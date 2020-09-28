@@ -1,5 +1,5 @@
 use crate::chain;
-use crate::log;
+
 use bitcoin::network::constants::Network;
 use bitcoin::secp256k1::key::{PublicKey, SecretKey};
 use lightning::chain::chaininterface::ChainWatchInterfaceUtil;
@@ -7,12 +7,13 @@ use lightning::chain::keysinterface::KeysManager;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio::net::{TcpListener};
 
 // Define concrete types for our high-level objects:
+type Logger = dyn lightning::util::logger::Logger;
 type TxBroadcaster = dyn lightning::chain::chaininterface::BroadcasterInterface;
 type FeeEstimator = dyn lightning::chain::chaininterface::FeeEstimator;
 type ChainWatchInterface = dyn lightning::chain::chaininterface::ChainWatchInterface;
-type Logger = dyn lightning::util::logger::Logger;
 type ChannelMonitor = lightning::ln::channelmonitor::SimpleManyChannelMonitor<
     lightning::chain::transaction::OutPoint,
     lightning::chain::keysinterface::InMemoryChannelKeys,
@@ -48,6 +49,7 @@ type PeerManager = lightning::ln::peer_handler::SimpleArcPeerManager<
 /// connect to a remote node.
 pub struct LightingClient {
     peer_manager: PeerManager,
+    logger: Arc<Logger>,
 }
 
 impl LightingClient {
@@ -56,10 +58,8 @@ impl LightingClient {
         seed: &[u8; 32],
         user_config: lightning::util::config::UserConfig,
         network: Network,
+        logger: Arc<Logger>,
     ) -> Self {
-        // construct a concrete logger for our application that will
-        // simply log to the console. not much special there.
-        let logger = Arc::new(log::ConsoleLogger::new());
 
         // constructs a bitcoin_client which implements ChainMonitor
         // TransactionBroadcaster and FeeEstimator. Since this is
@@ -146,7 +146,8 @@ impl LightingClient {
 
         // Finally we capture all this jazz in our client object
         let res = LightingClient {
-            peer_manager
+            peer_manager,
+            logger: logger.clone(),
         };
         res
     }
