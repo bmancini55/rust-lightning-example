@@ -1,5 +1,5 @@
 use bitcoin::network::constants::Network;
-use bitcoin::secp256k1::key::{PublicKey, SecretKey};
+use bitcoin::secp256k1::{PublicKey, SecretKey, Secp256k1};
 use std::net::SocketAddr;
 use tokio;
 
@@ -24,6 +24,11 @@ async fn main() {
     let node_key_str = "d84985781fee4676a616f81399d28cced95a691a983c582b6285108e02830673";
     let node_key_slice = hex::decode(node_key_str).unwrap();
     let node_key = SecretKey::from_slice(&node_key_slice).unwrap();
+
+    // construct and log the pubkey
+    let secp = Secp256k1::new();
+    let node_pubkey = PublicKey::from_secret_key(&secp, &node_key);
+    log_info!(logger.clone(), "using pubkey {}", log_pubkey!(&node_pubkey));
 
     let user_config = lightning::util::config::UserConfig::default();
 
