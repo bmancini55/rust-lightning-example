@@ -48,8 +48,19 @@ async fn main() {
     // let node_id_str = "03933884aaf1d6b108397e5efe5c86bcf2d8ca8d2f700eda99db9214fc2712b134";
     // let node_addr_str = "34.250.234.192:9735";
 
-    let node_id_slice = &hex::decode(node_id_str).unwrap();
-    let node_id = PublicKey::from_slice(&node_id_slice).unwrap();
-    let node_addr: SocketAddr = node_addr_str.parse().unwrap();
-    demo_client.connect_to_node(node_id, node_addr).await;
+
+    // connect to the remote node
+    let demo_client_clone = demo_client.clone();
+    tokio::spawn(async move {
+        let node_id_slice = &hex::decode(node_id_str).unwrap();
+        let node_id = PublicKey::from_slice(&node_id_slice).unwrap();
+        let node_addr: SocketAddr = node_addr_str.parse().unwrap();
+        demo_client_clone.connect_to_node(node_id, node_addr).await;
+    });
+
+
+    // fire up the server
+    tokio::spawn(async move {
+        demo_client.listen("127.0.0.1:9735").await.unwrap();
+    }).await.unwrap();
 }

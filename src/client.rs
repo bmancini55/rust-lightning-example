@@ -171,4 +171,23 @@ impl LightingClient {
             self.peer_manager.process_events();
         }
     }
+
+    pub async fn listen(&self, addr_str: &str) -> Result<TcpListener, Box<dyn std::error::Error>>   {
+        let addr: SocketAddr = addr_str.parse().unwrap();
+        let mut listener = TcpListener::bind(addr).await?;
+        log_info!(self.logger, "listening for sockets on {}", addr_str);
+        loop {
+            let (socket, _) = listener.accept().await?;
+            let peer_manager = self.peer_manager.clone();
+            tokio::spawn(async move {
+                let (sender, mut receiver) = mpsc::channel(2);
+                lightning_net_tokio::setup_inbound(peer_manager.clone(), sender, socket).await;
+
+                loop {
+                    receiver.recv().await;
+                    peer_manager.process_events();
+                }
+            });
+        }
+    }
 }
