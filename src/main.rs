@@ -2,6 +2,10 @@ use bitcoin::network::constants::Network;
 use bitcoin::secp256k1::key::{PublicKey, SecretKey};
 use std::net::SocketAddr;
 use tokio;
+
+#[macro_use]
+mod log_macros;
+
 mod chain;
 mod client;
 mod log;
