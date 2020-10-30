@@ -1,46 +1,51 @@
+use crate::channelpersistor::ChannelPersistor;
 use crate::chain;
 
 use bitcoin::network::constants::Network;
 use bitcoin::secp256k1::key::{PublicKey, SecretKey};
-use lightning::chain::chaininterface::ChainWatchInterfaceUtil;
+use lightning::chain::keysinterface::InMemoryChannelKeys;
 use lightning::chain::keysinterface::KeysManager;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::net::{TcpListener};
 
+
+
 // Define concrete types for our high-level objects:
 type Logger = dyn lightning::util::logger::Logger;
 type TxBroadcaster = dyn lightning::chain::chaininterface::BroadcasterInterface;
 type FeeEstimator = dyn lightning::chain::chaininterface::FeeEstimator;
-type ChainWatchInterface = dyn lightning::chain::chaininterface::ChainWatchInterface;
-type ChannelMonitor = lightning::ln::channelmonitor::SimpleManyChannelMonitor<
-    lightning::chain::transaction::OutPoint,
-    lightning::chain::keysinterface::InMemoryChannelKeys,
+type ChainFilter = dyn lightning::chain::Filter;
+type ChainAccess = dyn lightning::chain::Access;
+
+type ChainMonitor = lightning::chain::chainmonitor::ChainMonitor<
+    InMemoryChannelKeys,
+    Arc<ChainFilter>,
     Arc<TxBroadcaster>,
     Arc<FeeEstimator>,
     Arc<Logger>,
-    Arc<ChainWatchInterface>,
+    Arc<ChannelPersistor>
 >;
+
 type ChannelManager = lightning::ln::channelmanager::SimpleArcChannelManager<
-    ChannelMonitor,
+    ChainMonitor,
     TxBroadcaster,
     FeeEstimator,
     Logger,
 >;
-type NetGraphManager = Arc<
-    lightning::routing::network_graph::NetGraphMsgHandler<Arc<ChainWatchInterface>, Arc<Logger>>,
->;
 
-type GossipQueriesManager = lightning::routing::gossip::SimplGossipQueryHandler<Arc<Logger>>;
+type NetGraphManager = lightning::routing::network_graph::NetGraphMsgHandler<
+    Arc<ChainAccess>,
+    Arc<Logger>
+>;
 
 type PeerManager = lightning::ln::peer_handler::SimpleArcPeerManager<
     lightning_net_tokio::SocketDescriptor,
-    ChannelMonitor,
+    ChainMonitor,
     TxBroadcaster,
     FeeEstimator,
-    ChainWatchInterface,
-    GossipQueriesManager,
+    ChainAccess,
     Logger,
 >;
 
@@ -61,30 +66,27 @@ impl LightingClient {
         logger: Arc<Logger>,
     ) -> Self {
 
-        // constructs a bitcoin_client which implements ChainMonitor
-        // TransactionBroadcaster and FeeEstimator. Since this is
-        // a dev environment we'll make this a concrete type.
+        // Constructs a fake bitcoin_client which implements FeeEstimator
+        // and TransactionBroadcaster.
         let bitcoin_client = Arc::new(chain::FakeBitcoinClient::new(logger.clone()));
 
-        // construct a ChainWatchInterfaceUtil which implements
-        // ChainWatchInteface and will be provided to the ChannelMonitor
-        // and NetGraphManager since they both watch for changes to
-        // transactions of interest.
-        let chain_watcher = Arc::new(ChainWatchInterfaceUtil::new(network));
+        // Constructs a fake channel persistor since we're only concerned
+        // with gossip related stuff.
+        let peristor = Arc::new(ChannelPersistor{});
 
-        // next we will construct a Arc<SimpleManyChannelMonitor>
-        // that uses a ChainMonitor, FeeEstimator, TxBroadcaster,
-        // and Logger.
-        let channel_monitor: Arc<ChannelMonitor> = Arc::new(
-            lightning::ln::channelmonitor::SimpleManyChannelMonitor::new(
-                chain_watcher.clone(),
+        // Construct a ChainMonitor that does not use a chain::Filter,
+        // also supply the FeeEstimator, TxBroadcaster, and a Logger
+        let chain_monitor: Arc<ChainMonitor> = Arc::new(
+            lightning::chain::chainmonitor::ChainMonitor::new(
+                None,
                 bitcoin_client.clone(),
                 logger.clone(),
                 bitcoin_client.clone(),
-            ),
+                peristor.clone(),
+            )
         );
 
-        // next we construct a keys_manager from our supplied seed
+        // Next we construct a keys_manager from our supplied seed
         // for the appropriate network. Again we don't really need
         // to do much with this since we're only concerned with
         // gossip traffic
@@ -98,31 +100,34 @@ impl LightingClient {
             ts.subsec_nanos(),
         ));
 
-        // next we construct a channel manager for
+        // Next we construct a channel manager for for the Testnet
+        // network and supply FeeEstimator, TxBroadcaster, ChainMonitor,
+        // Logger, and KeyManager. This type implements ChannelMessageHandler
+        // and is used by the message_handler which gets used in the
+        // PeerManager.
         let last_height: usize = 1000000;
-        let channel_manager: ChannelManager =
-            Arc::new(lightning::ln::channelmanager::ChannelManager::new(
+        let channel_manager: ChannelManager = Arc::new(
+            lightning::ln::channelmanager::ChannelManager::new(
                 Network::Testnet,
                 bitcoin_client.clone(),
-                channel_monitor.clone(),
+                chain_monitor.clone(),
                 bitcoin_client.clone(),
                 logger.clone(),
                 keys_manager.clone(),
                 user_config,
                 last_height,
-            ));
+            )
+        );
 
-        // next construct the NetGraphMsgHandler which requires a
-        // ChainWatchInterface. This type will be used as the
+        // Next construct the NetGraphMsgHandler which requires a
+        // chain::Access. This type will be used as the
         // RoutingMessageHandler which gets attached to a MessageHandler,
         // which is itself used in the PeerManager. Cool.
-        let net_graph_manager: NetGraphManager =
+        let net_graph_manager: Arc<NetGraphManager> =
             Arc::new(lightning::routing::network_graph::NetGraphMsgHandler::new(
-                chain_watcher.clone(),
+                None,
                 logger.clone(),
             ));
-
-        let gossip_handler = Arc::new(GossipQueriesManager::new(logger.clone()));
 
         // Now that we have a ChannelMessageHandler (channel_manager)
         // and a RoutingMessageHandler (net_graph_manager) we can
@@ -131,10 +136,9 @@ impl LightingClient {
         let message_handler = lightning::ln::peer_handler::MessageHandler {
             chan_handler: channel_manager.clone(),
             route_handler: net_graph_manager.clone(),
-            gossip_queries_handler: gossip_handler.clone(),
         };
 
-        // Now that we have the Message Handler constructed we can
+        // Now that we have the MessageHandler constructed we can
         // make our PeerManager and supply it with MessageHandler
         // and some other stuff
         let peer_manager: PeerManager = Arc::new(lightning::ln::peer_handler::PeerManager::new(

@@ -7,6 +7,7 @@ use tokio;
 mod log_macros;
 
 mod chain;
+mod channelpersistor;
 mod client;
 mod log;
 
@@ -36,6 +37,10 @@ async fn main() {
     // construct hte demo client
     let demo_client = Arc::new(client::LightingClient::new(node_key, &seed, user_config, Network::Testnet, logger.clone()));
 
+    // lightning
+    // let node_id_str = "02462af1452a7c81b9f448e8137786b520bec9d15f3d864acca3f6672936e492ff";
+    // let node_addr_str = "192.168.0.113:9735";
+
     // demo2.lndexplorer.com (LND v0.11)
     let node_id_str = "03b1cf5623ca6757d49de3b6e2b9340065ba991c75b8e9cd8aec51dc54322cbd1d";
     let node_addr_str = "38.87.54.164:9745";
@@ -61,6 +66,6 @@ async fn main() {
 
     // fire up the server
     tokio::spawn(async move {
-        demo_client.listen("127.0.0.1:9735").await.unwrap();
+        demo_client.listen("127.0.0.1:9736").await.unwrap();
     }).await.unwrap();
 }
