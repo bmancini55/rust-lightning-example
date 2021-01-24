@@ -3,6 +3,7 @@ use crate::chain;
 
 use bitcoin::network::constants::Network;
 use bitcoin::secp256k1::key::{PublicKey, SecretKey};
+use bitcoin::blockdata::constants::genesis_block;
 use lightning::chain::keysinterface::InMemoryChannelKeys;
 use lightning::chain::keysinterface::KeysManager;
 use std::net::SocketAddr;
@@ -125,6 +126,7 @@ impl LightingClient {
         // which is itself used in the PeerManager. Cool.
         let net_graph_manager: Arc<NetGraphManager> =
             Arc::new(lightning::routing::network_graph::NetGraphMsgHandler::new(
+                genesis_block(Network::Testnet).header.block_hash(),
                 None,
                 logger.clone(),
             ));
