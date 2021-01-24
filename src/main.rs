@@ -45,6 +45,10 @@ async fn main() {
     let node_id_str = "03b1cf5623ca6757d49de3b6e2b9340065ba991c75b8e9cd8aec51dc54322cbd1d";
     let node_addr_str = "38.87.54.164:9745";
 
+    // lnbig1
+    // let node_id_str = "02312627fdf07fbdd7e5ddb136611bdde9b00d26821d14d94891395452f67af248";
+    // let node_addr_str = "23.237.77.12:9735";
+
     // demo1.lndexplorer.com (LNV v0.7)
     // let node_id_str = "036b96e4713c5f84dcb8030592e1bd42a2d9a43d91fa2e535b9bfd05f2c5def9b9";
     // let node_addr_str = "38.87.54.163:9745";
