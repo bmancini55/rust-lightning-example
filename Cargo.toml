@@ -8,11 +8,11 @@ edition = "2018"
 
 [dependencies]
 hex = "0.4.2"
-bitcoin = "0.24"
+bitcoin = "0.26"
+rand = "0.7.3"
 lightning = { version = "0.0.12", path = "../rust-lightning/lightning" }
 lightning-net-tokio = { version = "0.0.5", path = "../rust-lightning/lightning-net-tokio" }
-tokio = { version = ">=0.2.22", features = [ "io-util", "macros", "rt-core", "rt-threaded", "sync", "tcp", "time" ] }
-rand = "0.7.3"
+tokio = { version = "1.0", features = [ "io-util", "macros", "rt", "sync", "net", "time" ] }
 
 [dev-dependencies]
-tokio = { version = ">=0.2.22", features = [ "io-util", "macros", "rt-core", "rt-threaded", "sync", "tcp", "time" ] }
+tokio = { version = "1.0", features = [ "io-util", "macros", "rt", "rt-multi-thread", "sync", "net", "time" ] }

@@ -4,12 +4,12 @@ use crate::chain;
 use bitcoin::network::constants::Network;
 use bitcoin::secp256k1::key::{PublicKey, SecretKey};
 use bitcoin::blockdata::constants::genesis_block;
-use lightning::chain::keysinterface::InMemoryChannelKeys;
+use lightning::chain::keysinterface::InMemorySigner;
 use lightning::chain::keysinterface::KeysManager;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio::net::{TcpListener};
+use std::net::TcpListener;
 
 
 
@@ -21,7 +21,7 @@ type ChainFilter = dyn lightning::chain::Filter;
 type ChainAccess = dyn lightning::chain::Access;
 
 type ChainMonitor = lightning::chain::chainmonitor::ChainMonitor<
-    InMemoryChannelKeys,
+    InMemorySigner,
     Arc<ChainFilter>,
     Arc<TxBroadcaster>,
     Arc<FeeEstimator>,
@@ -54,7 +54,7 @@ type PeerManager = lightning::ln::peer_handler::SimpleArcPeerManager<
 /// minimum needed so we can look for p2p messaging traffic and
 /// connect to a remote node.
 pub struct LightingClient {
-    peer_manager: PeerManager,
+    peer_manager: Arc<PeerManager>,
     logger: Arc<Logger>,
 }
 
@@ -63,7 +63,6 @@ impl LightingClient {
         node_key: SecretKey,
         seed: &[u8; 32],
         user_config: lightning::util::config::UserConfig,
-        network: Network,
         logger: Arc<Logger>,
     ) -> Self {
 
@@ -96,7 +95,6 @@ impl LightingClient {
             .unwrap();
         let keys_manager = Arc::new(KeysManager::new(
             &seed,
-            network,
             ts.as_secs(),
             ts.subsec_nanos(),
         ));
@@ -107,18 +105,17 @@ impl LightingClient {
         // and is used by the message_handler which gets used in the
         // PeerManager.
         let last_height: usize = 1000000;
-        let channel_manager: ChannelManager = Arc::new(
-            lightning::ln::channelmanager::ChannelManager::new(
-                Network::Testnet,
-                bitcoin_client.clone(),
-                chain_monitor.clone(),
-                bitcoin_client.clone(),
-                logger.clone(),
-                keys_manager.clone(),
-                user_config,
-                last_height,
-            )
-        );
+        let channel_manager: Arc<ChannelManager> = Arc::new(lightning::ln::channelmanager::ChannelManager::new(
+            Network::Testnet,
+            bitcoin_client.clone(),
+            chain_monitor.clone(),
+            bitcoin_client.clone(),
+            logger.clone(),
+            keys_manager.clone(),
+            user_config,
+            last_height,
+        ));
+
 
         // Next construct the NetGraphMsgHandler which requires a
         // chain::Access. This type will be used as the
@@ -143,7 +140,7 @@ impl LightingClient {
         // Now that we have the MessageHandler constructed we can
         // make our PeerManager and supply it with MessageHandler
         // and some other stuff
-        let peer_manager: PeerManager = Arc::new(lightning::ln::peer_handler::PeerManager::new(
+        let peer_manager: Arc<PeerManager> = Arc::new(lightning::ln::peer_handler::PeerManager::new(
             message_handler,
             node_key,
             &rand::random::<[u8; 32]>(),
@@ -180,10 +177,10 @@ impl LightingClient {
 
     pub async fn listen(&self, addr_str: &str) -> Result<TcpListener, Box<dyn std::error::Error>>   {
         let addr: SocketAddr = addr_str.parse().unwrap();
-        let mut listener = TcpListener::bind(addr).await?;
+        let listener = TcpListener::bind(addr)?;
         log_info!(self.logger, "listening for sockets on {}", addr_str);
         loop {
-            let (socket, _) = listener.accept().await?;
+            let (socket, _) = listener.accept()?;
             let peer_manager = self.peer_manager.clone();
             tokio::spawn(async move {
                 let (sender, mut receiver) = mpsc::channel(2);

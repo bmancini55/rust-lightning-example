@@ -1,4 +1,3 @@
-use bitcoin::network::constants::Network;
 use bitcoin::secp256k1::{PublicKey, SecretKey, Secp256k1};
 use std::net::SocketAddr;
 use tokio;
@@ -19,7 +18,9 @@ type Logger = dyn lightning::util::logger::Logger;
 async fn main() {
     // construct a concrete logger for our application that will
     // simply log to the console. not much special there.
-    let logger: Arc<Logger> = Arc::new(log::ConsoleLogger::new());
+    let console = log::ConsoleLogger::new();
+    let logger: Arc<Logger> = Arc::new(console);
+
 
     let seed = rand::random::<[u8; 32]>();
     let node_key_str = "961cbdc16536c7df1e2ba6006e3e9c8f6dd2446850c207f25276a7b355fc60a5";
@@ -35,7 +36,7 @@ async fn main() {
 
 
     // construct hte demo client
-    let demo_client = Arc::new(client::LightingClient::new(node_key, &seed, user_config, Network::Testnet, logger.clone()));
+    let demo_client = Arc::new(client::LightingClient::new(node_key, &seed, user_config, logger.clone()));
 
     // lightning
     // let node_id_str = "02462af1452a7c81b9f448e8137786b520bec9d15f3d864acca3f6672936e492ff";
